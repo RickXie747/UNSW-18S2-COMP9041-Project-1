@@ -1,0 +1,469 @@
+COMP[29]041 18s2
+Assignment 1 - Legit
+COMP[29]041 18s2
+version: 2.9 last updated: 2018-09-29 09:22
+
+Aims
+This assignment aims to give you
+
+practice in Perl programming generally
+introduce you to git & give you a clear concrete understanding of its basic semantics
+Note: the material in the lecture notes will not be sufficient by itself to allow you to complete this assignment. You may need to search on-line documentation for Perl, git etc. Being able to search documentation efficiently for the information you need is a very useful skill for any kind of computing work.
+
+Introduction
+Your task in this assignment is to write a Perl program legit.pl which implements a subset of the version control system Git
+Git is a very complex program which has many individual commands. You will implement only a few of the most important commands.
+
+You will be given a number of simplifying assumptions which make your task easier.
+
+Reference implementation
+Many aspects of this assignment are not fully specified in this document.
+Instead you must match the behaviour of a reference implementation - /home/cs2041/bin/legit.
+
+Provision of a reference implementation is a common method to provide an operational specification, and its something you will likely need to do after you leave UNSW.
+
+Discovering & matching the reference implementation's behaviour is deliberately part of the assignment.
+
+Your Perl script legit.pl should match the behaviour of /home/cs2041/bin/legit exactly, including for example producing the same error messages.
+
+The reference implementation is a wrapper around git, so tutorials for the equivalent git commands will help you understand the reference implementation. For example this Meet Git video from Atlassian:
+
+
+
+While the code in the reference implementation is fairly straight forward, reverse-engineering its behaviour is obviously not so simple and it's a nice example of how coming to grips with the precise semantics of an apparently obvious task can still be challenging.
+
+If you discover what you believe to be a bug in the reference implementation, report it in the class forum. Andrew may fix the bug or indicate that you do not need to match the reference implementation's behaviour in this case.
+
+Legit Commands - Subset 0
+legit.pl init
+The init command creates an empty Legit repository.
+legit.pl should create a directory named .legit which it will use to store the repository.
+
+It should produce an error message if this directory already exists. You should match this and other error messages exactly. For example:
+
+ls -d .legit
+ls: cannot access .legit: No such file or directory
+./legit.pl init
+Initialized empty legit repository in .legit
+ls -d .legit
+.legit
+./legit.pl init
+legit.pl: error: .legit already exists
+legit.pl may create initial files or directories inside .legit.
+You do not have to use a particular representation to store the repository.
+
+You do not have to create the same files or directory inside .legit as the reference implementation.
+
+legit.pl add filenames
+The add command adds the contents of one or more files to the "index".
+Files are added to the repository in a two step process. The first step is adding them to the index.
+
+You will need to store files in the index somehow in the .legit sub-directory. For example you might choose store them in a sub-directory of .legit.
+
+Only ordinary files in the current directory can be added, and their names will always start with an alphanumeric character ([a-zA-Z0-9]) and will only contain alpha-numeric characters plus '.', '-' and '_' characters.
+
+The add command, and other legit.pl commands, will not be given pathnames with slashes.
+
+legit.pl commit -m message
+The legit.pl commit command saves a copy of all files in the index to the repository.
+A message describing the commit must be included as part of the commit command.
+
+legit.pl commits are numbered (not hashes like git). You must match the numbering scheme.
+
+You can assume the commit message is ASCII, does not contain new-line characters and does not start with a '-' character.
+
+legit.pl log
+legit.pl log prints one line for every commit that has been made to the repository.
+Each line should contain the commit number and the commit message.
+
+legit.pl show commit:filename
+legit.pl show should print the contents of the specified file as of the specified commit.
+If the commit is omitted the contents of the file in the index should be printed.
+
+For example:
+
+./legit.pl init
+Initialized empty legit repository in .legit
+echo line 1 > a
+echo hello world >b
+./legit.pl add a b
+./legit.pl commit -m 'first commit'
+Committed as commit 0
+echo  line 2 >>a
+./legit.pl add a
+./legit.pl commit -m 'second commit'
+Committed as commit 1
+./legit.pl log
+1 second commit
+0 first commit
+echo line 3 >>a
+./legit.pl add a
+echo line 4 >>a
+./legit.pl show 0:a
+line 1
+./legit.pl show 1:a
+line 1
+line 2
+./legit.pl show :a
+line 1
+line 2
+line 3
+cat a
+line 1
+line 2
+line 3
+line 4
+./legit.pl show 0:b
+hello world
+./legit.pl show 1:b
+hello world
+Legit Commands - Subset 1
+Subset 1 is more difficult and you will need spend some time understanding the semantics (meaning) of these operations by running the reference implementation or researching the equivalent git operations.
+Note the assessment scheme recognizes this difficulty.
+
+legit.pl commit [-a] -m message
+legit.pl commit can have a -a option which causes all files already in the index to have their contents from the current directory added to the index before the commit.
+legit.pl rm [--force] [--cached] filenames
+legit.pl rm removes a file from the index, or from the current directory and the index.
+If the --cached option is specified the file is removed only from the index and not from the current directory.
+
+legit.pl like git should stop the user accidentally losing work.
+
+It should give an error message instead of removing the file in the current directory if it is different to the last commit.
+
+It should also give an error message instead of removing the file from the index if it is different to the last commit.
+
+The --force option overrides both these checks.
+
+legit.pl status
+legit.pl status shows the status of files in the current directory, index, and repository.
+./legit.pl init
+Initialized empty legit repository in .legit
+touch a b c d e f g h
+./legit.pl add a b c d e f
+./legit.pl commit -m 'first commit'
+Committed as commit 0
+echo hello >a
+echo hello >b
+echo hello >c
+./legit.pl add a b
+echo world >a
+rm d
+./legit.pl rm e
+./legit.pl add g
+./legit.pl status
+a - file changed, different changes staged for commit
+b - file changed, changes staged for commit
+c - file changed, changes not staged for commit
+d - file deleted
+e - deleted
+f - same as repo
+g - added to index
+h - untracked
+legit.pl - untracked
+Legit Commands - Subset 2
+Subset 2 is extremely difficult and you will need spend considerable time understanding the semantics of these operations by running the reference implementation and researching the equivalent git operations.
+Note the assessment scheme recognizes this difficulty.
+
+legit.pl branch [-d] [branch-name]
+legit.pl branch either creates a branch, deletes a branch or lists current branch names.
+legit.pl checkout branch-name
+legit.pl checkout switches branches.
+Note unlike git you can not specify a commit or a file, you can only specify a branch.
+
+legit.pl merge branch-name|commit -m message
+legit.pl merge -m message adds the changes that have been made to specified branch or commit to the index and commits them.
+./legit.pl init
+Initialized empty legit repository in .legit
+seq 1 7 >7.txt
+./legit.pl add 7.txt
+./legit.pl commit -m commit-1
+Committed as commit 0
+./legit.pl branch b1
+./legit.pl checkout b1
+Switched to branch 'b1'
+perl -pi -e 's/2/42/' 7.txt
+cat 7.txt
+1
+42
+3
+4
+5
+6
+7
+./legit.pl commit -a -m commit-2
+Committed as commit 1
+./legit.pl checkout master
+Switched to branch 'master'
+cat 7.txt
+1
+2
+3
+4
+5
+6
+7
+perl -pi -e 's/5/24/' 7.txt
+cat 7.txt
+1
+2
+3
+4
+24
+6
+7
+./legit.pl commit -a -m commit-3
+Committed as commit 2
+./legit.pl merge b1 -m merge-message
+Auto-merging 7.txt
+cat 7.txt
+1
+42
+3
+4
+24
+6
+7
+If a file contains conflicting changes legit.pl merge produces an error message.
+./legit.pl init
+Initialized empty legit repository in .legit
+seq 1 7 >7.txt
+./legit.pl add 7.txt
+./legit.pl commit -m commit-1
+Committed as commit 0
+./legit.pl branch b1
+./legit.pl checkout b1
+Switched to branch 'b1'
+perl -pi -e 's/2/42/' 7.txt
+cat 7.txt
+1
+42
+3
+4
+5
+6
+7
+./legit.pl commit -a -m commit-2
+Committed as commit 1
+./legit.pl checkout master
+Switched to branch 'master'
+cat 7.txt
+1
+2
+3
+4
+5
+6
+7
+perl -pi -e 's/2/24/' 7.txt
+cat 7.txt
+1
+24
+3
+4
+5
+6
+7
+./legit.pl commit -a -m commit-3
+Committed as commit 2
+./legit.pl merge b1 -m merge-message
+legit.pl: error: These files can not be merged:
+7.txt
+Legit - Challenge
+Often commits involve small changes to large files.
+Can you use a data representation such that a commit involving a small change to a large file uses only small amount of extra space.
+
+For consides this example
+
+./legit.pl init
+Initialized empty legit repository in .legit
+seq 1 1000000 >million_line_file.txt
+./legit.pl add million_line_file.txt
+./legit.pl commit -m commit1
+Committed as commit 0
+du -bs .legit
+2193700 .legit
+echo extra line >>million_line_file.txt
+./legit.pl commit -a -m commit2
+Committed as commit 1
+du -bs .legit
+2194603 .legit
+sed -i 500000d  million_line_file.txt
+./legit.pl commit -a -m commit3
+Committed as commit 2
+du -bs .legit
+2195511 .legit
+du -sb .legit print how many bytes disk space the repository is using.
+sed -i 500000d deletes the 500,000th line in the file.
+
+Note the disk space used by the repository only grows a little when we add line to a very large file and commit it again, and similarly when we delete a line.
+
+Diary
+You must keep notes on each piece of work you make on this assignment. The notes should include date, starting & finishing time, and a brief description of the work carried out. For example:
+Date	Start	Stop	Activity	Comments
+18/09/18	16:00	17:30	coding	implemented basic commit functionality
+19/09/18	20:00	10:30	debugging	found bug in command-line arguments
+Include these notes in the files you submit as an ASCII file named diary.txt.
+
+Testing
+As usual some autotests will be available:
+2041 autotest legit
+...
+You can also run only tests for a particular subset or specify individual tests:
+2041 autotest legit subset1
+...
+2041 autotest legit subset1_13 subset2_25
+...
+If you are using multiple Perl files, note autotest tries to detect automatically any extra Perl files legit.pl needs, if it fails include them on the command line.
+You will need to do most of the testing yourself.
+
+Test Scripts
+You should submit ten Shell scripts named test00.sh .. test09.sh which run legit commands which test an aspect of Legit.
+The test??.sh scripts do not have to be examples that your program implements successfully.
+
+You may share your test examples with your friends but the ones you submit must be your own creation.
+
+The test scripts should show how you've thought about testing carefully.
+
+Assumptions/Clarifications
+Like all good programmers, you should make as few assumptions as possible. Your assignment must be entirely written in Perl.
+It must not run external programs (e.g. via system or back-quotes).
+
+Your program will be run with version of Perl installed on CSE lab machines.
+
+You may write scripts in Shell or other languages to assist in testing your assignment.
+
+You may only use Perl packages which are installed on CSE's lab computers.
+
+You may submit multiple Perl files but the primary file must be named legit.pl.
+
+You can assume legit.pl is always run in the same directory as the repository and only files from that directory are added to the repository.
+
+You can assume that the directory in which legit.pl is run will not contain sub-directories apart from .legit.
+
+You can assume that branch names all start with an alphanumeric character ([a-zA-Z0-9]) and will only contain alphanumeric characters plus '-' and '_'. Also, branch names cannot be entirely numeric, so that they can be distinguished from commits when merging.
+
+The legit.pl commands which are given filenames (add, show, rm) will be given just the filename, not pathnames with slashes.
+
+You do not have to consider file permissions or other file metadata, for example you do not have to ensure files created by a checkout command have the same permisisons as when they were added.
+
+You do not have to handle concurrancy. You can assume only one instance of legit.pl is run at any time.
+
+You assume only the arguments described aboved are supplied to legit.pl. You do not have to handle other arguments.
+
+You should match the output streams used by the reference implementation. It writes error messages to stderr, so should you in legit.pl.
+
+You should match the exit status used by the reference implementation. It exits with status 1 after an error, so should you in legit.pl.
+
+Change Log
+Version 1.0
+(2018-09-12 11:32)
+Reference implementation error messages changed to consistently quote branches and filenames.
+Bugs in reference implementation branch command bugs fixed.
+Autotests added.
+Version 1.1
+(2018-09-13 14:10)
+Add example for challenge component
+Version 1.2
+(2018-09-14 23:10)
+branch usage & commit usage message corrected in spec & reference implemementation
+Version 1.3
+(2018-09-16 15:10)
+autotests added
+Version 1.4
+(2018-09-17 14:10)
+clarification added regarding commit messages
+Version 1.5
+(2018-09-17 16:10)
+several errors in usage messages corrected in reference implementation
+Version 2.0
+(2018-09-17 16:10)
+major change to message produced by git status
+Version 2.1
+(2018-09-19 11:00)
+error in commit numbers when merging branches corrected in reference implementation, autotest added, extra information about running autotests added
+Version 2.2
+(2018-09-19 19:10)
+reference implementation handling of fast-forward when merging branches corrected
+Version 2.3
+(2018-09-20 19:34)
+corrected wording of legit rm description to be more explicit as to its function
+Version 2.4
+(2018-09-21 01:23)
+corrected valid branch name assumptions in the spec and reference implementation
+Version 2.5
+(2018-09-21 10:18)
+added clarification that branch names cannot be entirely numeric
+Version 2.6
+(2018-09-24 11:17)
+fixed implementation handling of branches and filenames with the same name
+Version 2.7
+(2018-09-24 13:44)
+fixed implementation ordering of commit numbers using numeric sorting
+Version 2.8
+(2018-09-26 13:11)
+fixed usage message trailing whitespace
+Version 2.9
+(2018-09-29 09:22)
+account for modify/delete-type merge conflict in reference implementation
+Attribution of Work
+This is an individual assignment. The work you submit must be your own work and only your work apart from any exceptions explicitly included in the assignment specification above.
+Joint work is not permitted.
+
+You are only permitted to request help with the assignment in the course forum, help sessions or from course lecturers or tutors.
+
+Do not provide or show your assignment work to any other person (including by posting it on the forum) apart from the teaching staff of COMP[29]041.
+
+The work you submit must otherwise be entirely your own work. Submission of work partially or completely derived from any other person or jointly written with any other person is not permitted. The penalties for such an offence may include negative marks, automatic failure of the course and possibly other academic discipline. Assignment submissions will be examined both automatically and manually for such submissions.
+
+We are required to inform scholarship authorities if students holding scholarships are involved in an incident of plagiarism or other misconduct, and this may result in a loss of the scholarship.
+
+Plagiarism or other misconduct can also result in loss of student visas.
+
+If you knowingly provide or show your assignment work to another person for any reason, and work derived from it is submitted you may be penalized, even if the work was submitted without your knowledge or consent. This may apply even if your work is submitted by a third party unknown to you.
+
+Note, you will not be penalized if your work is taken without your consent or knowledge.
+
+Submission of Work
+You are required to submit intermediate versions of your assignment.
+Every time you work on the assignment and make some progress you should copy your work to your CSE account and submit it using the give command below.
+
+It is fine if intermediate versions do not compile or otherwise fail submission tests.
+
+Only the final submitted version of your assignment will be marked.
+
+All these intermediate versions of your work will be placed in a git repository and made available to you via a web interface at this URL, replace z5555555 with your own zid: https://gitlab.cse.unsw.edu.au/z5555555/18s2-comp2041-ass1_legit/commits/master
+
+This will allow you to retrieve earlier versions of your code if needed.
+
+You submit your work like this:
+
+give cs2041 ass1_legit legit.pl diary.txt test??.sh [any-other-files]
+Assessment
+This assignment will contribute 15 marks to your final COMP[29]041 mark
+15% of the marks for assignment 1 will come from hand marking. These marks will be awarded on the basis of clarity, commenting, elegance and style. In other words, you will be assessed on how easy it is for a human to read and understand your program.
+
+5% of the marks for assignment 1 will be based on the test suite you submit.
+
+80% of the marks for assignment 1 will come from the performance of your code on a large series of tests.
+
+HD+ 100	All subsets working & challenge, legit.pl is beautiful, great test suite & diary
+HD (90)	Subset 2 working, legit.pl is very clear & very readable, very good test suite & diary
+DN (80)	Subset 1 working, legit.pl is good clear code, good test suite & diary
+CR (70)	Subset 0 working, legit.pl is good clear code, good test suite & diary
+PS (60)	Subset 0 passing some tests, legit.pl is reasonably readable, reasonable test suite & diary
+PS (55)	Subset 0 working internally (storing data) put not passing tests
+0%	Knowingly providing your work to anyone and it is subsequently submitted (by anyone).
+0 FL for COMP[29]041	Submitting any other person's work. This includes joint work.
+academic
+misconduct	Submitting another person's work without their consent. Paying another person to do work for you.
+The lecturer may vary the assessment scheme after inspecting the assignment submissions but its likely to be broadly similar to the above.
+
+Due Date
+This assignment is tentatively due Saturday 5 January 19:00
+If your assignment is submitted after this date, each hour it is late reduces the maximum mark it can achieve by 2%. For example if an assignment worth 74% was submitted 10 hours late, the late submission would have no effect. If the same assignment was submitted 15 hours late it would be awarded 70%, the maximum mark it can achieve at that time.
+
+COMP[29]041 18s2: Software Construction is brought to you by 
+the School of Computer Science and Engineering at the University of New South Wales, Sydney.
+For all enquiries, please email the class account at cs2041@cse.unsw.edu.au
+CRICOS Provider 00098G
