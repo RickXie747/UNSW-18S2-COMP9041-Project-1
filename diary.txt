@@ -1,0 +1,30 @@
+Date	Start	Stop	Activity		Comments
+26/09/18	13:30	17:30	coding		implemented Subset0
+	18:00	20:00	debugging	alphanumeric character strict for add function, file comparsion for commit function
+
+28/09/18	14:00	15:00	coding		show, add, commit errors messages
+
+29/09/18	10:30	14:00	coding		implemented Subset1
+	19:00	24:00	coding		add a deleted file for -add and commit -a
+					error message for rm
+30/09/18	00:00	2:00	coding   		implemented Subset2: branch
+
+1/10/18	13:00	20:00	coding&debuging	checkout, merge	
+					add information of commited branches to log file 
+					bug fixed:
+					1) checkout incorrectly changes uncommitted file
+					2) checkout incorrectly changes uncommitted file
+					3) branches with unmerged file can be deleted
+					4) status checks all branches commits
+					bug not fixed:
+					1)over-written when checkout
+
+2/10/18	13:00	19:30	coding&debuging   write few functions to reduce duplicate codes
+					1) check whether one file is in index, branches  or commits
+					2) read current working branch
+					3) _merge based on Algorithm::Merge
+					bug fixed:
+					1) modified file may not be saved after checkout other branches
+					bug not fixed:
+					1)over-written when checkout
+					2) log cannot trace the merged branches with current branch
