@@ -1,0 +1,2601 @@
+COMP[29]041 18s2
+Marked Assignment
+COMP[29]041 18s2
+Submission
+5192747 Xie, Cheng                              8543   COMPCS
+
+Submissions:-
+
+S 0     Wed Oct  3 12:39:27 2018        5192747 thu13-strings ass1_legit 0:-11
+S 0     Wed Oct  3 20:24:03 2018        5192747 thu13-strings ass1_legit 0:-3
+S 0     Wed Oct  3 20:26:04 2018        5192747 thu13-strings ass1_legit 0:-3
+S 0     Wed Oct  3 20:29:07 2018        5192747 thu13-strings ass1_legit 0:-3
+
+Wed Oct 31 11:38:17 2018                ## williams.orchestra.cse.unsw.EDU.AU ##
+Listing
+legit.pl
+     1  #!/usr/bin/perl -w
+     2  use File::Copy;
+     3  use File::Path 'rmtree';
+     4  use File::Compare;
+     5  use Algorithm::Merge qw(merge diff3 traverse_sequences3);
+     6
+     7  # read current working branch
+     8  sub getwb {
+     9      open my $f, '<', ".legit/workingbranch";
+    10      my $wb = <$f>;
+    11      return $wb;
+    12  }
+    13  # read current existing commits
+    14  sub getindex {
+    15      my $index = -2;
+    16      foreach my $commit (glob ".legit/commit/*") {
+    17          $index ++;
+    18      }
+    19      return $index
+    20  }
+    21
+    22  # check whether one file is saved in branches
+    23  sub isbranched {
+    24      my ($file) = @_;
+    25      foreach my $branch (glob ".legit/branch/*") {
+    26              $branch =~ s/\.legit\/branch\///;
+    27              if (-e ".legit/branch/$branch/$file" && compare("$file", ".legit/branch/$branch/$file") == 0) {
+    28                  return 1;
+    29          }
+    30      }
+    31      return 0;
+    32  }
+    33
+    34  # check whether one file is committed
+    35  sub iscommitted {
+    36      my ($file) = @_;
+    37      foreach my $commit (glob ".legit/commit/*") {
+    38              $commit =~ s/\.legit\/commit\///;
+    39              next if $commit eq "log";
+    40              if (-e ".legit/commit/$commit/$file" && compare("$file", ".legit/commit/$commit/$file") == 0) {
+    41                  return 1;
+    42          }
+    43      }
+    44      return 0;
+    45  }
+    46
+    47  # check whether one file is added in index
+    48  sub isindexed {
+    49      my ($file) = @_;
+    50      if (-e ".legit/index/$file" && compare("$file", ".legit/index/$file") == 0) {
+    51          return 1;
+    52      }
+    53      return 0;
+    54  }
+    55
+    56  # merge based on Algorithm::Merge, return merged content in array
+    57  sub _merge{
+    58      my ($fwb, $ftarget, $fcommon) = @_;
+    59      open my $a, '<', "$fwb";
+    60      my @f1 = <$a>;
+    61      open my $b, '<', "$ftarget";
+    62      my @f2 = <$b>;
+    63      open my $c, '<', "$fcommon";
+    64      my @f3 = <$c>;
+    65      my @result = merge(\@f3, \@f2, \@f1, {
+    66          CONFLICT => sub {die "legit.pl: error: These files can not be merged:\n$fwb\n"}
+    67      });
+    68      return @result
+    69  }
+    70
+    71  # init
+    72  if (length $ARGV[0] && $ARGV[0] eq "init") {
+    73      ! -e ".legit" or die "legit.pl: error: .legit already exists\n";
+    74      mkdir ".legit";
+    75      mkdir ".legit/index";
+    76      mkdir ".legit/commit";
+    77      mkdir ".legit/branch";
+    78      mkdir ".legit/commonbase";  # saving files in commonbase when making a new branch, works for merge function
+    79      open my $f, '>', ".legit/workingbranch";    # workingbranch indicates which branch is working
+    80      print $f "master";
+    81      close $f;
+    82      print "Initialized empty legit repository in .legit\n";
+    83
+    84  # add
+    85  } elsif (length $ARGV[0] && $ARGV[0] eq "add") {
+    86      -e ".legit" or die "legit.pl: error: no .legit directory containing legit repository exists\n";
+    87      shift @ARGV;
+    88      foreach my $file (@ARGV) {
+    89          (-e "$file" || -e ".legit/index/$file")  or die "legit.pl: error: can not open '$file'\n";
+    90          $file =~ /^[a-zA-Z0-9]/ or die "legit.pl: error: invalid filename '$file'\n";
+    91          my $fname = $file;
+    92          $fname =~ s/[-_]//;
+    93          $fname =~ s/\.//;
+    94          ! ($fname =~ /\W/) or die "legit.pl: error: invalid filename '$file'\n";
+    95      }
+    96      foreach my $file (@ARGV) {
+    97          next if $file eq "legit.pl";
+    98          # remove the file from index if some deleted file is added
+    99          if (! -e "$file" && -e ".legit/index/$file") {
+   100              unlink ".legit/index/$file";
+   101              next;
+   102          }
+   103          copy("$file", ".legit/index/");
+   104      }
+   105
+   106  # commit
+   107  } elsif (length $ARGV[0] && $ARGV[0] eq "commit"){
+   108      ((@ARGV == 3 && $ARGV[1] eq "-m")||(@ARGV == 4 && $ARGV[1] eq "-a" && $ARGV[2] eq "-m")) or die "usage: legit.pl commit [-a] -m commit-message\n";
+   109      # option -a
+   110      if ($ARGV[1] eq "-a") {
+   111          -e ".legit/commit/log" or die "nothing to commit\n";
+   112          foreach my $file (glob ".legit/index/*"){
+   113              my $fname = $file;
+   114              $fname =~ s/\.legit\/index\///;
+   115              if (-e $fname) {
+   116                  copy($fname, ".legit/index/");
+   117              }
+   118          }
+   119          shift @ARGV;
+   120      }
+   121      # commit 0
+   122      if (! -e ".legit/commit/log") {
+   123          $wb = getwb();
+   124          mkdir ".legit/commit/0";
+   125          open my $m, '>', ".legit/commit/log";
+   126          print $m "0 \"$ARGV[2]\" $wb\n";
+   127          close $m;
+   128          foreach my $file (glob ".legit/index/*") {
+   129              copy("$file", ".legit/commit/0/");
+   130              copy("$file", ".legit/branch/$wb/");
+   131          }
+   132          print "Committed as commit 0\n";
+   133      } else {
+   134      # compare the files, then compare the files' contents if the index and last commit have same files
+   135          my $commit_flag = 0;
+   136          my @c_array = ();
+   137          my @i_array = ();
+   138          $index = getindex();
+   139          foreach my $file (glob ".legit/index/*") {
+   140              $file =~ s/\.legit\/index\///;
+   141              push @i_array, $file;
+   142          }
+   143          foreach my $file (glob ".legit/commit/$index/*") {
+   144              $file =~ s/\.legit\/commit\/$index\///;
+   145              push @c_array, $file;
+   146          }
+   147          $commit_flag = 1 if @i_array !=  @c_array;
+   148          if ($commit_flag == 0) {
+   149              foreach my $file (@i_array) {
+   150                  if (compare(".legit/index/$file", ".legit/commit/$index/$file") != 0) {
+   151                      $commit_flag = 1;
+   152                      last;
+   153                  }
+   154              }
+   155          }
+   156          if ($commit_flag == 1) {
+   157              my $wb = getwb();
+   158              $index ++;
+   159              mkdir ".legit/commit/$index";
+   160              open my $m, '>>', ".legit/commit/log";
+   161              print $m "$index \"$ARGV[2]\" $wb\n";
+   162              close $m;
+   163              foreach my $file (glob ".legit/index/*") {
+   164                  copy("$file", ".legit/commit/$index/");
+   165                  copy("$file", ".legit/branch/$wb/");
+   166              }
+   167              print "Committed as commit $index\n";
+   168          } else {
+   169              print "nothing to commit\n";
+   170          }
+   171      }
+   172
+   173  # log
+   174  } elsif (length $ARGV[0] && $ARGV[0] eq "log") {    # bug not fixed - cannot trace merged branches relations
+   175      my $wb = getwb();
+   176      open my $log, '<', ".legit/commit/log" or die "legit.pl: error: your repository does not have any commits yet\n";
+   177      my @log = reverse <$log>;
+   178      foreach my $line (@log) {
+   179          if ($line =~ /(\S+) (".+") (.*)$/) {
+   180              my $branch = $3;
+   181              my $content = "$1 $2";
+   182              $content =~ s/\"//g;
+   183              print "$content\n";
+   184          }
+   185      }
+   186
+   187  # show
+   188  } elsif (length $ARGV[0] && $ARGV[0] eq "show") {
+   189      if (! length $ARGV[1]) {
+   190          die "usage: legit.pl show <commit>:<filename>\n";
+   191      }
+   192      if ($ARGV[1] =~ /^(.*):(.*)$/) {
+   193          my $commit = $1;
+   194          my $file = $2;
+   195          ! ($commit =~ /\D/) or die "legit.pl: error: unknown commit '$commit'\n";
+   196          $file =~ /^[a-zA-Z0-9]/ or die "legit.pl: error: invalid filename '$file'\n";
+   197          my $fname = $file;
+   198          $fname =~ s/[-_]//;
+   199          $fname =~ s/\.//;
+   200          ! ($fname =~ /\W/) or die "legit.pl: error: invalid filename '$file'\n";
+   201          if (! length $commit) {
+   202              open my $f, '<', ".legit/index/$file" or die "legit.pl: error: '$file' not found in index\n";
+   203              my @content = <$f>;
+   204              print @content;
+   205          } else {
+   206              -e ".legit/commit/$commit" or die "legit.pl: error: unknown commit '$commit'\n";
+   207              open my $f, '<', ".legit/commit/$commit/$file" or die "legit.pl: error: '$file' not found in commit $commit\n";
+   208              my @content = <$f>;
+   209              print @content;
+   210          }
+   211      } else {
+   212          print "legit.pl: error: invalid object $ARGV[1]\n";
+   213      }
+   214
+   215  # rm
+   216  } elsif (length $ARGV[0] && $ARGV[0] eq "rm") {
+   217      shift @ARGV;
+   218      my $force = 0;
+   219      my $cached = 0;
+   220      if ($ARGV[0] eq '--force') {
+   221          $force = 1;
+   222          shift @ARGV;
+   223      }
+   224      if ($ARGV[0] eq '--cached') {
+   225          $cached = 1;
+   226          shift @ARGV;
+   227      }
+   228      if ($ARGV[0] eq '--force') {
+   229          $force = 1;
+   230          shift @ARGV;
+   231      }
+   232      my $commit_flag = 0;
+   233      $index = getindex();
+   234      foreach my $file (@ARGV) {
+   235          -e ".legit/index/$file" or die "legit.pl: error: '$file' is not in the legit repository\n";
+   236      }
+   237      foreach my $file (@ARGV) {
+   238          $eflag = 0;    # error flag for 3 cases of errors
+   239          if ($force == 1) {
+   240              unlink ".legit/index/$file";
+   241              unlink "$file" if $cached == 0;
+   242              next;
+   243          }
+   244          if (-e ".legit/commit/$index/$file") {
+   245              $eflag += 1 if compare(".legit/index/$file", ".legit/commit/$index/$file") != 0 && $cached == 0;
+   246          }
+   247          if (-e "$file") {
+   248              if ($cached == 0) {
+   249                  -e ".legit/commit/$index/$file" or die "legit.pl: error: '$file' has changes staged in the index\n";
+   250                  $eflag += 2 if compare(".legit/index/$file", "$file") != 0;
+   251              }
+   252              if ($cached == 1) {
+   253                  $eflag = 3 if compare(".legit/index/$file", "$file") != 0 && compare(".legit/index/$file", ".legit/commit/$index/$file") != 0;
+   254              }
+   255          }
+   256          $eflag != 1 or die "legit.pl: error: '$file' has changes staged in the index\n";
+   257          $eflag != 2 or die "legit.pl: error: '$file' in repository is different to working file\n";
+   258          $eflag != 3 or die "legit.pl: error: '$file' in index is different to both working file and repository\n";
+   259          if ($force == 0) {
+   260              unlink ".legit/index/$file";
+   261              unlink "$file" if $cached == 0;
+   262          }
+   263      }
+   264
+   265  # status
+   266  } elsif (length $ARGV[0] && $ARGV[0] eq "status") {
+   267      if (-e ".legit/branch/master") {
+   268          my $wb = getwb();
+   269          foreach my $file (glob ".legit/branch/$wb/*") {
+   270              $file =~ s/\.legit\/branch\/$wb\///;
+   271              push @c_array, $file;
+   272          }
+   273          $path = ".legit/branch/$wb";
+   274      } else {
+   275          my $index = getindex();
+   276          foreach my $file (glob ".legit/commit/$index/*") {
+   277              $file =~ s/\.legit\/commit\/$index\///;
+   278              push @c_array, $file;
+   279          }
+   280          $path = ".legit/commit/$index";
+   281      }
+   282      foreach my $file (glob ".legit/index/*") {
+   283          $file =~ s/\.legit\/index\///;
+   284          push @i_array, $file;
+   285      }
+   286      foreach my $file (glob "*") {
+   287          push @o_array, $file;
+   288      }
+   289      foreach my $file (@i_array) {
+   290          if (grep $_ eq $file, @o_array) {
+   291              if (compare (".legit/index/$file", "$file") == 0) {
+   292                  $status{$file} = "same as repo";
+   293              } else {
+   294                  $status{$file} = "file changed, changes not staged for commit";
+   295              }
+   296          } else {
+   297              $status{$file} = "file deleted";
+   298          }
+   299      }
+   300      foreach my $file (@i_array) {
+   301          if (grep $_ eq $file, @c_array) {
+   302              if (compare (".legit/index/$file", "$path/$file") == 0) {
+   303                  $status{$file} = "file changed, changes not staged for commit" if $status{$file} ne "same as repo" && $status{$file} ne "file deleted";
+   304              } else {
+   305                  if ($status{$file} eq "same as repo") {
+   306                      $status{$file} = "file changed, changes staged for commit" if $status{$file} ne "file deleted";
+   307                  } else {
+   308                      $status{$file} = "file changed, different changes staged for commit" if $status{$file} ne "file deleted";
+   309                  }
+   310              }
+   311          } else {
+   312              $status{$file} = "added to index" if $status{$file} ne "file deleted";
+   313          }
+   314      }
+   315      foreach my $file (@c_array) {
+   316          if (! grep $_ eq $file, @i_array) {
+   317              $status{$file} = "deleted";
+   318          }
+   319      }
+   320      foreach my $file (@o_array) {
+   321          if (! grep $_ eq $file, @i_array) {
+   322              $status{$file} = "untracked";
+   323          }
+   324          if (grep $_ eq $file, @i_array && grep $_ eq $file, @c_array) {
+   325              $status{$file} = "same as repo" if compare("$file", "$path/$file") == 0;
+   326          }
+   327      }
+   328      foreach $file (sort keys %status) {
+   329          print "$file - $status{$file}\n";
+   330      }
+   331
+   332  # branch
+   333  } elsif (length $ARGV[0] && $ARGV[0] eq "branch") {
+   334      if (@ARGV == 1) {
+   335          -e ".legit/branch/master" or die "legit.pl: error: your repository does not have any commits yet\n";
+   336          foreach my $b (glob ".legit/branch/*") {
+   337              $b =~ s/\.legit\/branch\///;
+   338              print "$b\n";
+   339          }
+   340          exit 1;
+   341      }
+   342      if (@ARGV == 3 && $ARGV[1] eq "-d") {
+   343          -e ".legit/branch/$ARGV[2]" or die "legit.pl: error: branch '$ARGV[2]' does not exist\n";
+   344          $ARGV[2] ne "master" or die "legit.pl: error: can not delete branch 'master'\n";
+   345          foreach my $file (glob ".legit/branch/$ARGV[2]/*") {
+   346              $file =~ s/\.legit\/branch\/$ARGV[2]\///;
+   347              iscommitted($file) or die "legit.pl: error: branch '$ARGV[2]' has unmerged changes\n";
+   348          }
+   349          rmtree(".legit/branch/$ARGV[2]");
+   350          print "Deleted branch '$ARGV[2]'\n";
+   351          exit 1;
+   352      }
+   353      ! -e ".legit/branch/$ARGV[1]" or die "legit.pl: error: branch '$ARGV[1]' already exists\n";
+   354      # init master branch
+   355      if (! -e ".legit/branch/master") {
+   356          mkdir ".legit/branch/master";
+   357          foreach my $file (glob "*") {
+   358              next if $file eq "legit.pl" || $file eq ".legit";
+   359              copy ("$file", ".legit/branch/master/");
+   360          }
+   361      }
+   362      mkdir ".legit/branch/$ARGV[1]";
+   363      $wb = getwb();
+   364      mkdir ".legit/commonbase/$wb\_$ARGV[1]";
+   365      foreach my $file (glob "*") {
+   366          next if $file eq "legit.pl" || $file eq ".legit";
+   367          copy ("$file", ".legit/branch/$ARGV[1]/");
+   368          copy ("$file", ".legit/commonbase/$wb\_$ARGV[1]/");
+   369      }
+   370
+   371  # checkout
+   372  } elsif (length $ARGV[0] && $ARGV[0] eq "checkout") {
+   373      # checkout  step 1: modified existing files, overwritten files from branch if needed
+   374      #           step 2: modified existing files, removed files if needed
+   375      #           step 3: copy files from branch if needed
+   376      -e ".legit/branch/$ARGV[1]" or die "legit.pl: error: unknown branch '$ARGV[1]'\n";
+   377      my $wb = getwb();
+   378      my $index = getindex();
+   379      open my $f2, '>', ".legit/workingbranch";
+   380      print $f2 "$ARGV[1]";
+   381      close $f2;
+   382      foreach my $file (glob "*") {
+   383          next if $file eq "legit.pl" || $file eq ".legit";
+   384          if (-e ".legit/branch/$ARGV[1]/$file") {
+   385              next if compare("$file", ".legit/branch/$ARGV[1]/$file") == 0;
+   386              if (isbranched($file)) {
+   387                  copy (".legit/branch/$ARGV[1]/$file", "$file");
+   388              }
+   389          } else {
+   390              unlink $file if iscommitted($file);
+   391          }
+   392      }
+   393      foreach my $file (glob ".legit/branch/$ARGV[1]/*") {
+   394          my $fname = $file;
+   395          $fname =~ s/\.legit\/branch\/$ARGV[1]\///;
+   396          copy ("$file", "./") if ! -e "$fname";
+   397      }
+   398      print "Switched to branch '$ARGV[1]'\n";
+   399
+   400  # merge
+   401  } elsif (length $ARGV[0] && $ARGV[0] eq "merge") {
+   402      @ARGV > 3 or die "legit.pl: error: empty commit message\n";
+   403      if ($ARGV[1] eq "-m") {
+   404          $message = $ARGV[2];
+   405          $bc = $ARGV[3];
+   406      } else {
+   407          $bc = $ARGV[1];
+   408          $message = $ARGV[3];
+   409      }
+   410      -e ".legit/branch/$bc" or die "legit.pl: error: unknown branch '$bc'\n";
+   411      $forward = 1;
+   412      $index = getindex();
+   413      $wb = getwb();
+   414      $dir = "commit";
+   415      $dir = "branch" if -e ".legit/branch/$bc";
+   416      foreach my $file (glob ".legit/$dir/$bc/*") {
+   417          $f = $file;
+   418          $f =~ s/\.legit\/$dir\/$bc\///;
+   419          if (! -e "$f") {
+   420              copy ("$file", "./");
+   421              next;
+   422          }
+   423          next if compare ("$file", "$f") == 0;
+   424          my @result = _merge("$f", "$file", ".legit/commonbase/$wb\_$bc/$f");
+   425          open my $merge, '>', "$f";
+   426          foreach my $line (@result) {
+   427                  print $merge "$line";
+   428          }
+   429          close $merge;
+   430          copy("$f", ".legit/index/");
+   431          $forward = 0 if compare("$f", "$file") != 0;
+   432          print "Auto-merging $f\n";
+   433      }
+   434      if ($forward == 0) {
+   435          $index ++;
+   436          mkdir ".legit/commit/$index";
+   437          open my $m, '>>', ".legit/commit/log";
+   438          print $m "$index \"$ARGV[2]\" $wb\n";
+   439          close $m;
+   440          foreach my $file (glob ".legit/index/*") {
+   441              copy("$file", ".legit/commit/$index/");
+   442              copy("$file", ".legit/branch/$wb/");
+   443              }
+   444          print "Committed as commit $index\n";
+   445      } else {
+   446          print "Fast-forward: no commit created\n";
+   447      }
+   448
+   449  # usage message
+   450  } else {
+   451      print
+   452  "Usage: legit.pl <command> [<args>]
+   453
+   454  These are the legit commands:
+   455      init       Create an empty legit repository
+   456      add        Add file contents to the index
+   457      commit     Record changes to the repository
+   458      log        Show commit log
+   459      show       Show file at particular state
+   460      rm         Remove files from the current directory and from the index
+   461      status     Show the status of files in the current directory, index, and repository
+   462      branch     list, create or delete a branch
+   463      checkout   Switch branches or restore current directory files
+   464      merge      Join two development histories together\n"
+   465  }
+diary.txt
+     1  Date    Start   Stop    Activity                Comments
+     2  26/09/18        13:30   17:30   coding          implemented Subset0
+     3          18:00   20:00   debugging       alphanumeric character strict for add function, file comparsion for commit function
+     4
+     5  28/09/18        14:00   15:00   coding          show, add, commit errors messages
+     6
+     7  29/09/18        10:30   14:00   coding          implemented Subset1
+     8          19:00   24:00   coding          add a deleted file for -add and commit -a
+     9                                          error message for rm
+    10  30/09/18        00:00   2:00    coding                  implemented Subset2: branch
+    11
+    12  1/10/18 13:00   20:00   coding&debuging checkout, merge
+    13                                          add information of commited branches to log file
+    14                                          bug fixed:
+    15                                          1) checkout incorrectly changes uncommitted file
+    16                                          2) checkout incorrectly changes uncommitted file
+    17                                          3) branches with unmerged file can be deleted
+    18                                          4) status checks all branches commits
+    19                                          bug not fixed:
+    20                                          1)over-written when checkout
+    21
+    22  2/10/18 13:00   19:30   coding&debuging   write few functions to reduce duplicate codes
+    23                                          1) check whether one file is in index, branches  or commits
+    24                                          2) read current working branch
+    25                                          3) _merge based on Algorithm::Merge
+    26                                          bug fixed:
+    27                                          1) modified file may not be saved after checkout other branches
+    28                                          bug not fixed:
+    29                                          1)over-written when checkout
+    30                                          2) log cannot trace the merged branches with current branch
+test00.sh
+     1  #!/bin/sh
+     2  #test01 -add incorrect filenames -incorrect commit usage -show non-exist commits and files
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7  ./legit.pl init
+     8
+     9  touch 1 1. 1_ 1+ _1
+    10  echo 0 > 1
+    11  echo 00 > 1_
+    12
+    13  ./legit.pl add 1
+    14  ./legit.pl add 1.
+    15  ./legit.pl add 1_ 999
+    16  ./legit.pl add 1+
+    17  ./legit.pl add _1
+    18
+    19  ./legit.pl commit
+    20  ./legit.pl -m
+    21  ./legit.pl hello
+    22  ./legit.pl hello commit -m
+    23  ./legit.pl commit -m hello world
+    24  ./legit.pl commit -m "hello world"
+    25
+    26  echo 1 > 1
+    27  echo 2 > 2
+    28  ./legit.pl add 1
+    29  ./legit.pl add 2
+    30  ./legit.pl commit -m "hello world 2"
+    31
+    32  ./legit.pl show 0:_1
+    33  ./legit.pl show 0:1
+    34  ./legit.pl show 1:_1
+    35  ./legit.pl show 1:1
+    36  ./legit.pl show 1:2
+    37  ./legit.pl show 1:999
+    38  ./legit.pl show 2:1
+    39  ./legit.pl show 2:999
+    40  ./legit.pl show :2
+    41  ./legit.pl show :999
+    42
+    43
+    44
+    45
+    46
+    47
+    48
+    49
+test01.sh
+     1  #!/bin/sh
+     2  #test02 -remove the file and add it -edit the file and add and commit it -add new file and commit it
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  echo 1 > 1
+     9  echo 2 > 2
+    10
+    11  ./legit.pl add 1
+    12  ./legit.pl commit -m 0
+    13
+    14  rm 1
+    15  ./legit.pl add 1
+    16  ./legit.pl commit -m 1
+    17
+    18  ./legit.pl add 2
+    19  ./legit.pl commit -m 2
+    20
+    21  echo 3 > 2
+    22  ./legit.pl commit -m 3
+    23  ./legit.pl add 2
+    24  ./legit.pl commit -m 3
+    25
+    26  echo a > a
+    27  ./legit.pl add a
+    28  echo 4 > 2
+    29  ./legit.pl commit -a -m 4
+    30
+    31  ./legit.pl show 0:1
+    32  ./legit.pl show 1:1
+    33  ./legit.pl show 2:1
+    34  ./legit.pl show 2:2
+    35  ./legit.pl show 3:2
+    36  ./legit.pl show 4:a
+    37  ./legit.pl show 4:2
+    38  ./legit.pl log
+    39
+test02.sh
+     1  #!/bin/sh
+     2  #test03 -legit rm removed files -rm the file which is not in index -force rm or cached rm the file which has been rmed
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  echo 1 > 1
+     9  echo 2 > 2
+    10  echo 3 > 3
+    11  echo 4 > 4
+    12  echo 5 > 5
+    13  echo 6 > 6
+    14  echo 7 > 7
+    15  echo 8 > 8
+    16
+    17  ./legit.pl add 1 2 3 4 5 6 7 8
+    18  ./legit.pl commit -m 0
+    19
+    20  rm 1
+    21  ./legit.pl rm 1
+    22  ./legit.pl rm 2
+    23
+    24  echo 33 > 3
+    25  echo 44 > 4
+    26  ./legit add 4
+    27
+    28  ./legit.pl rm 3
+    29  ./legit.pl rm 4
+    30  ./legit.pl rm --force 3
+    31  ./legit.pl rm --force 4
+    32
+    33  ./legit.pl rm --cached 5
+    34  ./legit.pl rm 5
+    35  ./legit.pl rm 6
+    36  ./legit.pl rm --cached 6
+    37  ./legit.pl rm --cached --force 7
+    38  ./legit.pl rm --force --cached 8
+    39
+    40  ./legit.pl commit -m 1
+    41  ./legit.pl show 1:1
+    42  ./legit.pl show 1:2
+    43  ./legit.pl show 1:3
+    44  ./legit.pl show 1:4
+    45  ./legit.pl show 1:5
+    46  ./legit.pl show 1:6
+    47  ./legit.pl show 1:7
+    48
+test03.sh
+     1  #!/bin/sh
+     2  #test04 -status of differnet files
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  echo 1 > 1
+     9  echo 2 > 2
+    10  echo 3 > 3
+    11  echo 4 > 4
+    12  echo 5 > 5
+    13  echo 6 > 6
+    14  echo 7 > 7
+    15  echo 8 > 8
+    16  echo 9 > 9
+    17
+    18  ./legit.pl add 1 2 3 4 5 6 7
+    19  ./legit.pl commit -m 0
+    20
+    21  rm 1
+    22  ./legit.pl rm 2
+    23  ./legit.pl rm --cached 3
+    24
+    25  echo 44 > 4
+    26  echo 55 > 5
+    27  echo 66 > 6
+    28  ./legit.pl add 4 6
+    29  echo 666 > 6
+    30
+    31  ./legit.pl status
+    32
+    33  rm 9
+    34  ./legit.pl commit -m 1
+    35  ./legit.pl status
+    36
+test04.sh
+     1  #!/bin/sh
+     2  #test05 -branches master->b1 new file>b11 new file master->b2 add file->b3 change file
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  echo 1 > 1
+     9
+    10  ./legit.pl add 1
+    11  ./legit.pl commit -m 0
+    12
+    13  ./legit.pl branch master
+    14  ./legit.pl branch b1
+    15  ./legit.pl branch b1
+    16  echo 2 > 2
+    17  ./legit.pl add 2
+    18  ./legit.pl commit -m 1
+    19
+    20  ./legit.pl branch b11
+    21  echo 3 > 3
+    22  ./legit.pl add 3
+    23  ./legit.pl commit -m 2
+    24
+    25  ./legit.pl checkout master
+    26  ./legit.pl branch b2
+    27  echo 4 > 4
+    28  ./legit.pl add 4
+    29  ./legit.pl commit -m 3
+    30
+    31  ./legit.pl branch b21
+    32  echo 444 > 4
+    33  ./legit.pl add 4
+    34  ./legit.pl commit -m 4
+    35
+    36  ./legit.pl checkout master
+    37  ls
+    38  ./legit.pl checkout b1
+    39  ls
+    40  ./legit.pl checkout b11
+    41  ls
+    42  ./legit.pl checkout b2
+    43  ls
+    44  cat 4
+    45  ./legit.pl checkout b21
+    46  ls
+    47  cat 4
+test05.sh
+     1  #!/bin/sh
+     2  #test06 -branch  master->commit->branch b1->new file->checkout b1->new file and change file->only add new file->commit
+     3  #               master->commit->branch b1->new file->checkout b1->new file and change file->only add changed file->commit
+     4
+     5  rm -r .legit
+     6
+     7  ./legit.pl init
+     8
+     9  echo 1 > 1
+    10  ./legit.pl add 1
+    11  ./legit.pl commit -m 0
+    12  ./legit.pl branch b1
+    13  echo 2 >> 1
+    14  ./legit.pl commit -a -m 1
+    15  ./legit.pl checkout b1
+    16  ls
+    17  cat 1
+    18  echo 3 >> 1
+    19  echo a > a
+    20  ./legit.pl add a
+    21  ./legit.pl commit -a -m 2
+    22  ./legit.pl checkout master
+    23  ls
+    24  cat 1
+    25  ./legit.pl checkout b1
+    26  ls
+    27  cat 1
+    28
+    29
+    30  rm -r .legit
+    31  rm 1 a
+    32
+    33  ./legit.pl init
+    34
+    35  echo 1 > 1
+    36  ./legit.pl add 1
+    37  ./legit.pl commit -m 0
+    38  ./legit.pl branch b1
+    39  echo 2 >> 1
+    40  ./legit.pl commit -a -m 1
+    41  ./legit.pl checkout b1
+    42  ls
+    43  cat 1
+    44  echo 3 >> 1
+    45  echo a > a
+    46  ./legit.pl add 1
+    47  ./legit.pl commit -a -m 1
+    48  ./legit.pl checkout master
+    49  ls
+    50  cat 1
+    51  ./legit.pl checkout b1
+    52  ls
+    53  cat 1
+    54
+test06.sh
+     1  #!/bin/sh
+     2  #test07 -merge files more lines or less lines or conflicts -merge one branch and then merge another branch
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  seq 1 3 > 1
+     9  echo 1 > 2
+    10  ./legit.pl add 1 2
+    11  ./legit.pl commit -m 0
+    12
+    13  ./legit.pl branch b1
+    14  ./legit.pl checkout b1
+    15  seq 2 4 > 1
+    16  echo 2 >> 2
+    17  ./legit.pl commit -a -m 1
+    18
+    19  ./legit.pl branch b2
+    20  ./legit.pl checkout b2
+    21  seq 0 3  > 1
+    22  echo 333  >> 2
+    23  ./legit.pl commit -a -m 2
+    24
+    25  ./legit.pl checkout master
+    26  ./legit.pl merge b1 commit -m m1
+    27  cat 1
+    28  cat 2
+    29
+    30  ./legit.pl checkout master
+    31  ./legit.pl merge b2 commit -m m1
+    32  cat 1
+    33  cat 2
+    34
+test07.sh
+     1  #!/bin/sh
+     2  #test08 -put new files and change files, add all of them or not add any of them, add new branches and checkout, check status
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  echo 1 > 1
+     9  echo 2 > 2
+    10  ./legit.pl add 1 2
+    11  ./legit.pl commit -m 0
+    12  echo 3 > 3
+    13  ./legit.pl branch b1
+    14  echo 4 > 4
+    15
+    16  ./legit.pl checkout b1
+    17  echo 11 > 1
+    18  echo a > a
+    19  ./legit.pl commit -m 1
+    20
+    21  ./legit.pl checkout master
+    22  echo 33 > 3
+    23  echo 22 > 2
+    24  ./legit.pl add 2
+    25  rm 4
+    26  ./legit.pl status
+    27  ./legit.pl log
+    28
+    29  ./legit.pl checkout b1
+    30  ./legit.pl status
+    31  ./legit.pl log
+    32
+test08.sh
+     1  #!/bin/sh
+     2  #test09 -merge brach has the same name with commit: a number
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  seq 1 5 > 1
+     9  ./legit.pl add 1
+    10  ./legit.pl commit -m 0
+    11
+    12  ./legit.pl branch 0
+    13  ./legit.pl checkout 0
+    14  seq 2 6 > 1
+    15  ./legit.pl commit -m 1
+    16
+    17  ./legit.pl checkout master
+    18  ./legit.pl merge 0 commit -m m1
+    19  cat 1
+    20
+    21
+test09.sh
+     1  #!/bin/sh
+     2  #test07 -more branches and file edited or removed, some are added and committed, check log and files in different branch
+     3
+     4  rm -r .legit
+     5
+     6  ./legit.pl init
+     7
+     8  echo 1 > 1
+     9  echo 2 > 2
+    10  echo 3 > 3
+    11  echo 4 > 4
+    12  echo 5 > 5
+    13  echo 6 > 6
+    14
+    15  ./legit.pl add 1 2
+    16  echo 11 > 1
+    17  ./legit.pl commit -m 0
+    18
+    19  ./legit.pl branch b1
+    20  echo 22 > 2
+    21  ./legit.pl checkout b1
+    22  ./legit.pl add 3 4
+    23  echo 33 > 3
+    24  ./legit.pl commit -m 1
+    25
+    26  ./legit.pl branch b2
+    27  ./legit.pl add 6
+    28  ./legit.pl rm 4
+    29  echo 55 > 5
+    30  ./legit.pl commit -m 2
+    31
+    32  ./legit.pl checkout master
+    33  ls
+    34  cat 1 2 3 4 5 6
+    35  ./legit.pl checkout b1
+    36  ls
+    37  cat 1 2 3 4 5 6
+    38  ./legit.pl checkout b2
+    39  ls
+    40  cat 1 2 3 4 5 6
+extract.out
+     1  G_LANG=''
+     2  G_TARGET=''
+     3  G_MAKEFILE=''
+     4  G_HUGS=''
+     5  G_MIRA=''
+     6  G_SR=''
+     7  G_M2MAIN=''
+     8  G_M2DEF=''
+     9  G_M2MOD=''
+    10  G_CMAIN=''
+    11  G_CHEAD=''
+    12  G_CAUX=''
+    13  G_JMAIN=''
+    14  G_JAUX=''
+    15  G_TEXT=' legit.pl test07.sh test04.sh test03.sh test01.sh test02.sh test06.sh test09.sh test08.sh test05.sh diary.txt test00.sh'
+    16  G_ALLTEXT=' legit.pl test07.sh test04.sh test03.sh test01.sh test02.sh test06.sh test09.sh test08.sh test05.sh diary.txt test00.sh'
+    17  G_BIN=''
+Assessment
+Test subset0_1 (init) - passed
+Test subset0_2 (init with existing repo) - passed
+Test subset0_3 (usage message) - passed
+Test subset0_4 (add with no previous init) - passed
+Test subset0_5 (add with non-existent file) - passed
+Test subset0_6 (add with non-existent file exit status) - failed (Incorrect output)
+Your program produced these 6 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ legit.pl add non_existent_file;echo $?
+legit.pl: error: can not open 'non_existent_file'
+2
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  legit.pl: error: can not open 'non_existent_file'
++ 1
+- 2
+- *** TEST STOPPED: incorrect output from legit.pl
+Test subset0_7 (add, commit, show commited) - passed
+Test subset0_8 (add large file, commit, show commited) - passed
+Test subset0_9 (add, commit, show staged) - passed
+Test subset0_10 (add, commit, change, show commited) - passed
+Test subset0_11 (add, commit, change, show staged) - passed
+Test subset0_12 (add, commit, rm, show commited) - passed
+Test subset0_13 (add, commit, rm, show staged) - passed
+Test subset0_14 (add, commit, change, add, change show) - passed
+Test subset0_15 (add, commit, show non-existent commited file) - passed
+Test subset0_16 (add, commit no message) - passed
+Test subset0_17 (add, commit, show non-existent staged file) - passed
+Test subset0_18 (add, commit, show non-existent staged file - exit status) - failed (Incorrect output)
+Your program produced these 10 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo hi  >a
+$ legit.pl add a
+$ legit.pl commit -m words
+Committed as commit 0
+$ legit.pl show :b; echo $?
+legit.pl: error: 'b' not found in index
+2
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  legit.pl: error: 'b' not found in index
++ 1
+- 2
+- *** TEST STOPPED: incorrect output from legit.pl
+Test subset0_19 (add, commit, show non-existent commit) - passed
+Test subset0_20 (add, commit, show non-existent commit - exit status) - failed (Incorrect output)
+Your program produced these 10 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo hi  >a
+$ legit.pl add a
+$ legit.pl commit -m words
+Committed as commit 0
+$ legit.pl show 1:a; echo $?
+legit.pl: error: unknown commit '1'
+2
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  legit.pl: error: unknown commit '1'
++ 1
+- 2
+- *** TEST STOPPED: incorrect output from legit.pl
+Test subset0_21 (add 2 files, commit, show commited, staged) - passed
+Test subset0_22 (add 10 files, commit, show) - passed
+Test subset0_23 (add 1000 files, commit, show) - passed
+Test subset0_24 (show, commit, commit) - passed
+Test subset0_25 (show, commit, commit) - passed
+Test subset0_26 (show, commit, commit) - passed
+Test subset0_27 (show errors) - passed
+Test subset0_28 (add, commit, no change, commit,) - passed
+Test subset0_29 (10 commits) - passed
+Test subset0_30 (42 commits) - passed
+Test subset0_31 (show) - passed
+Test subset0_32 (log) - passed
+Test subset0_33 (log) - passed
+Test subset0_34 (log) - passed
+Test subset0_35 (log) - passed
+Test subset0_36 (log) - passed
+Test subset0_37 (log) - passed
+Test subset0_38 (log) - passed
+Test subset1_39 (commit -a) - passed
+Test subset1_40 (10 commit -a) - failed (Incorrect output)
+Your program produced these 16 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ for i in $(seq 0 9);do echo $i >>a.txt;legit.pl commit -a -m $i;done
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+nothing to commit
+$ legit.pl show 0:a.txt
+legit.pl: error: unknown commit '0'
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl show 0:a.txt
+- legit.pl: error: unknown commit '0'
+- *** TEST STOPPED: incorrect output from legit.pl
++ legit.pl: error: your repository does not have any commits yet
++ $ legit.pl show 5:a.txt
++ legit.pl: error: your repository does not have any commits yet
++ $ legit.pl show 9:a.txt
++ legit.pl: error: your repository does not have any commits yet
+Test subset1_41 (add + commit -a) - passed
+Test subset1_42 (rm) - passed
+Test subset1_43 (rm) - passed
+Test subset1_44 (rm --cached) - passed
+Test subset1_45 (rm) - passed
+Test subset1_46 (rm add) - passed
+Test subset1_47 (rm add rm show) - passed
+Test subset1_48 (rm --force --cached) - passed
+Test subset1_49 (rm errors) - passed
+Test subset1_50 (rm  --cached errors) - passed
+Test subset1_51 (rm --force errors) - passed
+Test subset1_52 (rm options) - passed
+Test subset1_53 (rm errors) - passed
+Test subset1_54 (status) - passed
+Test subset1_55 (status) - passed
+Test subset1_56 (status) - passed
+Test subset1_57 (status) - passed
+Test subset1_58 (status) - passed
+Test subset1_59 (status) - passed
+Test subset1_60 (status) - passed
+Test subset1_61 (status) - passed
+Test subset1_62 (commit rm commit show errors) - passed
+Test subset2_63 (branch) - passed
+Test subset2_64 (branch ordering) - failed (Incorrect output)
+Your program produced these 35 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ touch a
+$ legit.pl add a
+$ legit.pl commit -m commit-0
+Committed as commit 0
+$ legit.pl branch b0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl branch b3
+$ legit.pl branch b4
+$ legit.pl branch b5
+$ legit.pl branch b6
+$ legit.pl branch b7
+$ legit.pl branch b8
+$ legit.pl branch b9
+$ legit.pl branch b10
+$ legit.pl branch b11
+$ legit.pl branch B12
+$ legit.pl branch
+b0
+b1
+b10
+b11
+B12
+b2
+b3
+b4
+b5
+b6
+b7
+b8
+b9
+master
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl branch
++ B12
+  b0
+  b11
+- B12
+  b2
+  master
+- *** TEST STOPPED: incorrect output from legit.pl
+Test subset2_65 (branch -d) - passed
+Test subset2_66 (branch errors) - passed
+Test subset2_67 (branch show) - failed (Incorrect output)
+Your program produced these 20 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo hello > a
+$ legit.pl add a
+$ legit.pl commit -m "Added a on master"
+Committed as commit 0
+$ legit.pl branch b2
+$ legit.pl branch b7
+$ legit.pl checkout b2
+Switched to branch 'b2'
+$ echo newline >> file.txt
+$ legit.pl add file.txt
+$ legit.pl commit -m "Added file.txt on b2"
+Committed as commit 1
+$ legit.pl checkout b7
+Switched to branch 'b7'
+$ legit.pl log
+1 Added file.txt on b2
+0 Added a on master
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl log
+- 1 Added file.txt on b2
+  0 Added a on master
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ legit.pl status
++ a - same as repo
++ $ legit.pl show 0:a
++ hello
++ $ legit.pl show 1:a
++ hello
+Test subset2_68 (checkout) - passed
+Test subset2_69 (checkout rm) - failed (Incorrect output)
+Your program produced these 15 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo line 1 >a
+$ legit.pl add a
+$ legit.pl commit -m c1
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ echo changed line 1 >a
+$ legit.pl add a
+$ rm a
+$ legit.pl checkout master
+Switched to branch 'master'
+*** TEST STOPPED: legit.pl incorrectly created these files: a
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'master'
+- *** TEST STOPPED: legit.pl incorrectly created these files: a
++ $ legit.pl status
++ a - added to index
++ $ legit.pl commit -m c2
++ Committed as commit 1
++ $ legit.pl status
++ a - file deleted
+Test subset2_70 (checkout errors) - failed (Incorrect output)
+Your program produced these 14 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ touch a b c d e f g h i j k l m
+$ legit.pl add a b c d j k l m
+$ legit.pl commit -m c1
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl rm j
+$ legit.pl rm m
+$ legit.pl rm --cached k
+$ legit.pl rm --cached l
+$ legit.pl checkout b1
+Switched to branch 'b1'
+*** TEST STOPPED: legit.pl incorrectly created these files: j m
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'b1'
+- *** TEST STOPPED: legit.pl incorrectly created these files: j m
++ $ legit.pl add e f g h i
++ $ echo line 1 >a
++ $ legit.pl add a
++ $ legit.pl rm --cached b
++ $ legit.pl rm --cached d
++ $ echo line 1 >d
++ $ legit.pl rm c
++ $ legit.pl commit -m c2
++ Committed as commit 1
++ $ legit.pl rm --cached g
++ $ legit.pl rm --cached h
++ $ legit.pl rm i
++ $ rm e
++ $ echo changed line 1 >a
++ $ echo line 1 >f
++ $ echo line 1 >h
++ $ echo line 1 >k
++ $ echo line 1 >j
++ $ echo line 1 >n
++ $ touch m
++ $ legit.pl add l m n
++ $ rm n
++ $ legit.pl checkout master
++ legit.pl: error: Your changes to the following files would be overwritten by checkout:
++ a
++ b
++ d
++ f
++ g
++ h
++ j
++ k
++ $ legit.pl status
++ a - file changed, changes not staged for commit
++ b - untracked
++ d - untracked
++ e - file deleted
++ f - file changed, changes not staged for commit
++ g - untracked
++ h - untracked
++ i - deleted
++ j - untracked
++ k - untracked
++ l - added to index
++ m - added to index
++ n - added to index
+Test subset2_71 (branch commit checkout) - passed
+Test subset2_72 (checkout modified file) - passed
+Test subset2_73 (checkout) - failed (Incorrect output)
+Your program produced these 19 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo hello > a
+$ legit.pl add a
+$ legit.pl commit -m 0
+Committed as commit 0
+$ legit.pl log
+0 0
+$ legit.pl branch b1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ echo world > a
+$ legit.pl commit -a -m 1
+Committed as commit 1
+$ echo how r u > a
+$ legit.pl add a
+$ legit.pl checkout master
+Switched to branch 'master'
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl checkout master
+- Switched to branch 'master'
+- *** TEST STOPPED: incorrect output from legit.pl
++ legit.pl: error: Your changes to the following files would be overwritten by checkout:
++ a
++ $ echo world > a
++ $ legit.pl checkout master
++ legit.pl: error: Your changes to the following files would be overwritten by checkout:
++ a
+Test subset2_74 (checkout rm) - passed
+Test subset2_75 (branch checkout) - failed (Incorrect output)
+Your program produced these 26 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo this is a mobile appliation for citizen scientists > cs_app
+$ echo readme > readme.md
+$ legit.pl add *
+$ legit.pl commit -m "started project"
+Committed as commit 0
+$ echo authors: ms and th >> readme.md
+$ legit.pl branch access_database
+$ legit.pl branch read_sensor
+$ legit.pl checkout access_database
+Switched to branch 'access_database'
+$ legit.pl show :readme.md
+readme
+$ echo this allows us to read from and store data in the database > dao
+$ legit.pl add dao
+$ echo added feature of authentication >> dao
+$ legit.pl commit -m "implemented database and authentication features"
+Committed as commit 1
+$ legit.pl status
+cs_app - same as repo
+dao - file changed, changes not staged for commit
+readme.md - file changed, changes not staged for commit
+$ legit.pl checkout read_sensor
+Switched to branch 'read_sensor'
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl checkout read_sensor
+- Switched to branch 'read_sensor'
+- *** TEST STOPPED: incorrect output from legit.pl
++ legit.pl: error: Your changes to the following files would be overwritten by checkout:
++ dao
++ $ echo this takes a light sensor reading > light
++ $ legit.pl add light
++ $ legit.pl commit -m "implemented light sensor reading"
++ Committed as commit 2
++ $ echo this takes a temperature reading > temp
++ $ echo debugging ~~~ >> light
++ $ legit.pl checkout master
++ legit.pl: error: Your changes to the following files would be overwritten by checkout:
++ dao
++ light
++ $ legit.pl merge -m "merging with master" master
++ Already up to date
++ $ legit.pl commit -a -m "debugged light sensor reading"
++ Committed as commit 3
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl merge -m "implemented light sensor reading" read_sensor
++ Already up to date
++ $ legit.pl show 3:light
++ this takes a light sensor reading
++ debugging ~~~
++ $ legit.pl log
++ 0 started project
+Test subset2_76 (delete branch with unmerged work) - passed
+Test subset2_77 (checkout with work that would be over-written) - failed (Incorrect output)
+Your program produced these 17 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo hello >a
+$ legit.pl add a
+$ legit.pl commit -m commit-A
+Committed as commit 0
+$ legit.pl branch branchA
+$ echo world >b
+$ legit.pl add b
+$ legit.pl commit -m commit-B
+Committed as commit 1
+$ legit.pl checkout branchA
+Switched to branch 'branchA'
+$ echo new contents >b
+$ legit.pl checkout master
+Switched to branch 'master'
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
++ $ legit.pl checkout master
++ legit.pl: error: Your changes to the following files would be overwritten by checkout:
++ b
++ $ legit.pl add b
++ $ legit.pl commit -m commit-C
++ Committed as commit 2
+  $ legit.pl checkout master
+  Switched to branch 'master'
+- *** TEST STOPPED: incorrect output from legit.pl
+Test subset2_78 (checkout status) - failed (Incorrect output)
+Your program produced these 29 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ touch test.txt
+$ legit.pl add test.txt
+$ legit.pl commit -m "0"
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ touch test2.txt
+$ legit.pl status
+test.txt - same as repo
+test2.txt - untracked
+$ legit.pl add test2.txt
+$ legit.pl status
+test.txt - same as repo
+test2.txt - added to index
+$ legit.pl commit -m "1"
+Committed as commit 1
+$ legit.pl status
+test.txt - same as repo
+test2.txt - same as repo
+$ legit.pl checkout b2
+Switched to branch 'b2'
+$ legit.pl status
+test.txt - same as repo
+test2.txt - file deleted
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  test.txt - same as repo
+- test2.txt - file deleted
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ echo newline >> test.txt
++ $ legit.pl status
++ test.txt - file changed, changes not staged for commit
++ $ legit.pl add test.txt
++ $ legit.pl status
++ test.txt - file changed, changes staged for commit
++ $ legit.pl commit -m "2"
++ Committed as commit 2
++ $ legit.pl status
++ test.txt - same as repo
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
++ $ legit.pl status
++ test.txt - same as repo
++ test2.txt - same as repo
++ $ legit.pl checkout b2
++ Switched to branch 'b2'
++ $ legit.pl status
++ test.txt - same as repo
+Test subset2_79 (show commit not in current branch) - failed (Incorrect output)
+Your program produced these 8 lines of output:
+$ echo "line 0" > text.txt
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ legit.pl add test.txt
+legit.pl: error: can not open 'test.txt'
+$ legit.pl commit -m "0"
+Committed as commit 0
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl commit -m "0"
++ nothing to commit
++ $ legit.pl branch b1
++ legit.pl: error: your repository does not have any commits yet
++ $ legit.pl branch b2
++ legit.pl: error: your repository does not have any commits yet
++ $ legit.pl checkout b1
++ legit.pl: error: your repository does not have any commits yet
++ $ echo "line 1" > test1.txt
++ $ legit.pl add test1.txt
++ $ legit.pl commit -m "1"
+  Committed as commit 0
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ legit.pl checkout b2
++ legit.pl: error: unknown branch 'b2'
++ $ legit.pl show 1:test1.txt
++ legit.pl: error: unknown commit '1'
++ $ echo "line 2" > test2.txt
++ $ legit.pl add test2.txt
++ $ legit.pl commit -m "2"
++ Committed as commit 1
++ $ legit.pl checkout b1
++ legit.pl: error: unknown branch 'b1'
++ $ legit.pl show 2:test2.txt
++ legit.pl: error: unknown commit '2'
+Test subset2_80 (checkout) - failed (Incorrect output)
+Your program produced these 14 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo cooL > "test.txt"
+$ echo base > "test2.txt"
+$ legit.pl add "test.txt" "test2.txt"
+$ legit.pl commit -m "0"
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ legit.pl rm test2.txt
+$ legit.pl checkout master
+Switched to branch 'master'
+*** TEST STOPPED: legit.pl incorrectly created these files: test2.txt
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'master'
+- *** TEST STOPPED: legit.pl incorrectly created these files: test2.txt
++ $ legit.pl branch afterrm
++ $ legit.pl checkout aftertm
++ legit.pl: error: unknown branch 'aftertm'
++ $ echo base> test2.txt
++ $ legit.pl add test2.txt
++ $ legit.pl commit -m "1"
++ nothing to commit
++ $ legit.pl branch after_recreate
++ $ legit.pl checkout after_recreate
++ Switched to branch 'after_recreate'
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
++ $ legit.pl checkout afterrm
++ Switched to branch 'afterrm'
++ $ legit.pl checkout after_recreate
++ Switched to branch 'after_recreate'
+Test subset2_81 (successful merge) - passed
+Test subset2_82 (successful merge - many changes) - passed
+Test subset2_83 (successful merge - many deletions) - passed
+Test subset2_84 (successful merge - many deletions) - passed
+Test subset2_85 (successful merge - many additions) - passed
+Test subset2_86 (successful merge - many additions) - passed
+Test subset2_87 (successful merge - changes + deletions) - passed
+Test subset2_88 (successful merge - changes + additions) - passed
+Test subset2_89 (successful merge - changes + additions + deletions) - passed
+Test subset2_90 (successful merge - changes + additions + deletions) - passed
+Test subset2_91 (successful merge - multiple files) - passed
+Test subset2_92 (merge conflict) - failed (Incorrect output)
+Your program produced these 25 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ seq 1 7 >7.txt
+$ legit.pl add 7.txt
+$ legit.pl commit -m commit-0
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ perl -pi -e s/2/42/ 7.txt
+$ legit.pl commit -a -m commit-1
+Committed as commit 1
+$ legit.pl checkout master
+Switched to branch 'master'
+$ perl -pi -e s/2/24/ 7.txt
+$ legit.pl commit -a -m commit-2
+Committed as commit 2
+$ legit.pl merge -m merge-message b1
+legit.pl: error: These files can not be merged:
+7.txt
+$ legit.pl log|sort
+0 commit-0
+1 commit-1
+2 commit-2
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  0 commit-0
+- 1 commit-1
+  2 commit-2
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ legit.pl status
++ 7.txt - same as repo
+Test subset2_93 (merge conflict) - failed (Incorrect output)
+Your program produced these 23 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo i must have been a fool > i_cant_lie.txt
+$ legit.pl add i_cant_lie.txt
+$ legit.pl commit -m "first line of lyrics"
+Committed as commit 0
+$ legit.pl branch correct
+$ legit.pl branch wrong
+$ legit.pl checkout correct
+Switched to branch 'correct'
+$ echo to love you so hard for so long >> i_cant_lie.txt
+$ legit.pl commit -a -m "second line of lyrics"
+Committed as commit 1
+$ legit.pl checkout wrong
+Switched to branch 'wrong'
+$ echo sunday morning rain is falling >> i_cant_lie.txt
+$ legit.pl commit -a -m "wrong second line of lyrics"
+Committed as commit 2
+$ legit.pl merge correct -m merge-attempt
+readline() on closed filehandle $c at ../legit.pl line 64.
+legit.pl: error: These files can not be merged:
+i_cant_lie.txt
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl merge correct -m merge-attempt
+- readline() on closed filehandle $c at ../legit.pl line 64.
+  legit.pl: error: These files can not be merged:
+  i_cant_lie.txt
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ echo i must have been a fool > i_cant_lie.txt
++ $ echo to love you so hard for so long >> i_cant_lie.txt
++ $ legit.pl add i_cant_lie.txt
++ $ legit.pl commit -a -m "correct lyrics"
++ Committed as commit 3
++ $ legit.pl log|sort
++ 0 first line of lyrics
++ 2 wrong second line of lyrics
++ 3 correct lyrics
++ $ legit.pl merge correct -m merge-attempt-2
++ Committed as commit 4
++ $ legit.pl log|sort
++ 0 first line of lyrics
++ 1 second line of lyrics
++ 2 wrong second line of lyrics
++ 3 correct lyrics
++ 4 merge-attempt-2
+Test subset2_94 (merge errors) - passed
+Test subset2_95 (many branches) - failed (Incorrect output)
+Your program produced these 63 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo 0 >level0
+$ legit.pl add level0
+$ legit.pl commit -m root
+Committed as commit 0
+$ legit.pl branch b0
+$ legit.pl branch b1
+$ legit.pl checkout b0
+Switched to branch 'b0'
+$ echo 0 >level1
+$ legit.pl add level1
+$ legit.pl commit -m 0
+Committed as commit 1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ echo 1 >level1
+$ legit.pl add level1
+$ legit.pl commit -m 1
+Committed as commit 2
+$ legit.pl checkout b0
+Switched to branch 'b0'
+$ legit.pl branch b00
+$ legit.pl branch b01
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ legit.pl branch b10
+$ legit.pl branch b11
+$ legit.pl checkout b00
+Switched to branch 'b00'
+$ echo 00 >level2
+$ legit.pl add level2
+$ legit.pl commit -m 00
+Committed as commit 3
+$ legit.pl checkout b01
+Switched to branch 'b01'
+$ echo 01 >level2
+$ legit.pl add level2
+$ legit.pl commit -m 01
+Committed as commit 4
+$ legit.pl checkout b10
+Switched to branch 'b10'
+$ echo 10 >level2
+$ legit.pl add level2
+$ legit.pl commit -m 10
+Committed as commit 5
+$ legit.pl checkout b11
+Switched to branch 'b11'
+$ echo 11 >level2
+$ legit.pl add level2
+$ legit.pl commit -m 11
+Committed as commit 6
+$ legit.pl checkout master
+Switched to branch 'master'
+$ legit.pl log|sort
+0 root
+1 0
+2 1
+3 00
+4 01
+5 10
+6 11
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
++ 0 root
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
++ $ legit.pl log|sort
++ 0 root
++ 2 1
++ $ legit.pl checkout b01
++ Switched to branch 'b01'
++ $ legit.pl log|sort
+  0 root
+  1 0
++ 4 01
++ $ legit.pl checkout b11
++ Switched to branch 'b11'
++ $ legit.pl log|sort
++ 0 root
+  2 1
++ 6 11
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl merge b0 -m merge0
++ Fast-forward: no commit created
++ $ legit.pl merge b00 -m merge00
++ Fast-forward: no commit created
++ $ legit.pl log|sort
++ 0 root
++ 1 0
+  3 00
+- 4 01
+- 5 10
+- 6 11
+- *** TEST STOPPED: incorrect output from legit.pl
+Test subset2_96 (merging deleted files) - failed (Incorrect output)
+Your program produced these 14 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo line 1 >a
+$ echo line 2 >b
+$ legit.pl add a
+$ legit.pl commit -m c1
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl add b
+$ legit.pl commit -m c2
+Committed as commit 1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+*** TEST STOPPED: legit.pl incorrectly created these files: b
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'b1'
+- *** TEST STOPPED: legit.pl incorrectly created these files: b
++ $ legit.pl rm a
++ $ legit.pl commit -m c3
++ Committed as commit 2
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl merge b1 -m m1
++ Committed as commit 3
++ $ legit.pl status
++ b - same as repo
+Test subset2_97 (merge multiple lines) - failed (Incorrect output)
+Your program produced these 16 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ printf "line 0
+line 1
+line 2
+line 3
+line 4
+" > test.txt
+$ legit.pl add test.txt
+$ legit.pl show :test.txt
+line 0
+line 1
+line 2
+line 3
+line 4
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
++ $ legit.pl show :test.txt
++ legit.pl: error: your repository does not have any commits yet
++ $ legit.pl commit -m "0"
++ Committed as commit 0
++ $ legit.pl branch b1
++ $ legit.pl branch b2
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
+  $ legit.pl show :test.txt
+  line 4
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ sed -i "2a NEW LINE 2
++ NEW LINE AFTER PREV" test.txt
++ sed: -e expression #1, char 16: extra characters after command
++ $ legit.pl add test.txt
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ $ legit.pl commit -m "1"
++ nothing to commit
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ $ legit.pl checkout b2
++ Switched to branch 'b2'
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ $ printf "line 5
++ line 6
++ line 7
++ " >> test.txt
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ $ legit.pl add test.txt
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
++ $ legit.pl commit -m "2"
++ Committed as commit 1
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
++ $ legit.pl merge b1 -m "Merging adding of multiple lines in sequence"
++ Already up to date
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
+Test subset2_98 (merge with deleted lines) - failed (Incorrect output)
+Your program produced these 58 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ printf "line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+" > test.txt
+$ legit.pl add test.txt
+$ legit.pl commit -m "0"
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ legit.pl show :test.txt
+line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+$ sed -i "/line 2/d" test.txt
+$ sed -i "/line 3/d" test.txt
+$ legit.pl show :test.txt
+line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+$ legit.pl add test.txt
+$ legit.pl show :test.txt
+line 0
+line 1
+line 4
+line 5
+line 6
+line 7
+$ legit.pl commit -m "1"
+Committed as commit 1
+$ legit.pl checkout b2
+Switched to branch 'b2'
+$ legit.pl show :test.txt
+line 0
+line 1
+line 4
+line 5
+line 6
+line 7
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  line 1
++ line 2
++ line 3
+  line 4
+  line 7
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ sed -i "/line 6/d" test.txt
++ $ sed -i "/line 7/d" test.txt
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
++ $ legit.pl add test.txt
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ $ legit.pl commit -m "2"
++ Committed as commit 2
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ $ legit.pl merge -m "Merging deletion of multiple lines in sequence" b1
++ Auto-merging test.txt
++ Committed as commit 3
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 4
++ line 5
+Test subset2_99 (merge added and deleted lines) - failed (Incorrect output)
+Your program produced these 68 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ printf "line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+" > test.txt
+$ legit.pl add test.txt
+$ legit.pl commit -m "0"
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ legit.pl show :test.txt
+line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+$ sed -i "5a NEW LINE 5
+NEW LINE AFTER PREV" test.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 1/d" test.txt
+$ sed -i "/line 2/d" test.txt
+$ legit.pl show :test.txt
+line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+$ legit.pl add test.txt
+$ legit.pl show :test.txt
+line 0
+line 3
+line 4
+line 5
+line 6
+line 7
+$ legit.pl commit -m "1"
+Committed as commit 1
+$ legit.pl show :test.txt
+line 0
+line 3
+line 4
+line 5
+line 6
+line 7
+$ legit.pl checkout b2
+Switched to branch 'b2'
+$ legit.pl show :test.txt
+line 0
+line 3
+line 4
+line 5
+line 6
+line 7
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  line 0
++ line 1
++ line 2
+  line 3
+  line 7
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ sed -i "3a NEW LINE 3
++ NEW LINE AFTER PREV" test.txt
++ sed: -e expression #1, char 16: extra characters after command
++ $ sed -i "/line 0/d" test.txt
++ $ legit.pl show :test.txt
++ line 0
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
++ $ legit.pl add test.txt
++ $ legit.pl show :test.txt
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
++ $ legit.pl commit -m "2"
++ Committed as commit 2
++ $ legit.pl show :test.txt
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
++ $ legit.pl merge b1 -m "Merging addition AND deletion of MULTIPLE lines in sequence TO CONFLICT"
++ legit.pl: error: These files can not be merged:
++ test.txt
++ $ legit.pl show :test.txt
++ line 1
++ line 2
++ line 3
++ line 4
++ line 5
++ line 6
++ line 7
+Test subset2_100 (merge conflict multiple files) - failed (Incorrect output)
+Your program produced these 81 lines of output:
+$ printf "line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+" > test.txt
+$ printf "line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+" > abc.txt
+$ printf "line 0
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+" > test2.txt
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ legit.pl add test.txt abc.txt test2.txt
+$ legit.pl commit -m "0"
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ sed -i "5a NEW LINE 5
+NEW LINE AFTER PREV" test.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 1/d" test.txt
+$ sed -i "/line 2/d" test.txt
+$ sed -i "5a NEW LINE 5
+NEW LINE AFTER PREV" test2.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 1/d" test2.txt
+$ sed -i "/line 2/d" test2.txt
+$ sed -i "5a NEW LINE 5
+NEW LINE AFTER PREV" abc.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 1/d" abc.txt
+$ sed -i "/line 2/d" abc.txt
+$ legit.pl add test.txt abc.txt test2.txt
+$ legit.pl commit -m "1"
+Committed as commit 1
+$ legit.pl checkout b2
+Switched to branch 'b2'
+$ sed -i "3a NEW LINE 3
+NEW LINE AFTER PREV" test.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 0/d" test.txt
+$ sed -i "3a NEW LINE 3
+NEW LINE AFTER PREV" test2.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 0/d" test2.txt
+$ sed -i "3a NEW LINE 3
+NEW LINE AFTER PREV" abc.txt
+sed: -e expression #1, char 16: extra characters after command
+$ sed -i "/line 0/d" abc.txt
+$ legit.pl add test.txt abc.txt test2.txt
+$ legit.pl commit -m "2"
+Committed as commit 2
+$ legit.pl merge b1 -m "Merging Conflict in multiple files"
+readline() on closed filehandle $c at ../legit.pl line 64.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+legit.pl: error: These files can not be merged:
+abc.txt
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl merge b1 -m "Merging Conflict in multiple files"
+- readline() on closed filehandle $c at ../legit.pl line 64.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+  legit.pl: error: These files can not be merged:
+  abc.txt
+- *** TEST STOPPED: incorrect output from legit.pl
++ test.txt
++ test2.txt
+Test subset2_101 (merge commit) - failed (Incorrect output)
+Your program produced these 15 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ touch a b c d e f
+$ legit.pl add a
+$ legit.pl commit -m 0
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ legit.pl add b
+$ legit.pl commit -m 1
+Committed as commit 1
+$ legit.pl checkout master
+Switched to branch 'master'
+*** TEST STOPPED: legit.pl incorrectly created these files: b
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'master'
+- *** TEST STOPPED: legit.pl incorrectly created these files: b
++ $ legit.pl add c
++ $ legit.pl commit -m 2
++ Committed as commit 2
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
++ $ legit.pl add d
++ $ legit.pl commit -m 3
++ Committed as commit 3
++ $ legit.pl add e
++ $ legit.pl commit -m 4
++ Committed as commit 4
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl merge -m 5 2
++ Already up to date
++ $ legit.pl merge -m 5 3
++ Committed as commit 5
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
+Test subset2_102 (auto-merging) - failed (Incorrect output)
+Your program produced these 26 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ seq 1 7 > a
+$ legit.pl add a
+$ legit.pl commit -m 0
+Committed as commit 0
+$ legit.pl branch b1
+$ seq 3 7 > a
+$ legit.pl commit -a -m 1
+Committed as commit 1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ seq 1 6 > a
+$ seq 6 >> a
+$ legit.pl commit -a -m 2
+Committed as commit 2
+$ legit.pl merge -m 3 master
+readline() on closed filehandle $c at ../legit.pl line 64.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+Auto-merging a
+Committed as commit 3
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl merge -m 3 master
+- readline() on closed filehandle $c at ../legit.pl line 64.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+- Use of uninitialized value $_[2] in array element at /usr/share/perl5/Algorithm/Merge.pm line 55.
+  Auto-merging a
+  Committed as commit 3
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ legit.pl show 3:a
++ 3
++ 4
++ 5
++ 6
++ 1
++ 2
++ 3
++ 4
++ 5
++ 6
++ $ legit.pl checkout master
++ Switched to branch 'master'
+Test subset2_103 (merging modified and deleted files) - failed (Incorrect output)
+Your program produced these 24 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo line 1 >a
+$ echo line 1 >b
+$ legit.pl add a b
+$ legit.pl commit -m c1
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ echo modified line 1 >a
+$ legit.pl rm b
+$ legit.pl commit -m c2
+Committed as commit 1
+$ legit.pl checkout master
+Switched to branch 'master'
+$ echo modified line 1 >b
+$ legit.pl commit -a -m c3
+Committed as commit 2
+$ legit.pl merge b1 -m m1
+Auto-merging a
+Auto-merging b
+Committed as commit 3
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl merge b1 -m m1
+- Auto-merging a
+- Auto-merging b
+- Committed as commit 3
+- *** TEST STOPPED: incorrect output from legit.pl
++ legit.pl: error: These files can not be merged:
++ b
++ $ legit.pl merge 1 -m m1
++ legit.pl: error: These files can not be merged:
++ b
+Test subset2_104 (fast-forward) - failed (Incorrect output)
+Your program produced these 12 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ touch c e f i l m
+$ legit.pl add c l m
+$ legit.pl commit -m c1
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl rm m
+$ legit.pl rm --cached l
+$ legit.pl checkout b1
+Switched to branch 'b1'
+*** TEST STOPPED: legit.pl incorrectly created these files: m
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'b1'
+- *** TEST STOPPED: legit.pl incorrectly created these files: m
++ $ legit.pl add e i
++ $ legit.pl rm c
++ $ legit.pl commit -m c2
++ Committed as commit 1
++ $ legit.pl rm i
++ $ rm e
++ $ echo line 1 >f
++ $ echo line 1 >n
++ $ touch m
++ $ legit.pl add l m n
++ $ rm n
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl status
++ c - same as repo
++ f - untracked
++ l - same as repo
++ m - same as repo
++ n - added to index
++ $ legit.pl merge 1 -m m1
++ Fast-forward: no commit created
+Test subset2_105 (fast-forward) - failed (Incorrect output)
+Your program produced these 14 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ touch a b c d
+$ legit.pl add a
+$ legit.pl commit -m "first commit"
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl add b
+$ legit.pl commit -m "second commit"
+Committed as commit 1
+$ legit.pl checkout b1
+Switched to branch 'b1'
+*** TEST STOPPED: legit.pl incorrectly created these files: b
+
+The difference between your output(-) and the correct output(+) is:
+...
+  Switched to branch 'b1'
+- *** TEST STOPPED: legit.pl incorrectly created these files: b
++ $ legit.pl add c
++ $ legit.pl commit -m "third commit"
++ Committed as commit 2
++ $ legit.pl checkout b2
++ Switched to branch 'b2'
++ $ legit.pl add d
++ $ legit.pl commit -m "fourth commit"
++ Committed as commit 3
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl merge 2 -m "fifth commit"
++ Committed as commit 4
++ $ legit.pl checkout b2
++ Switched to branch 'b2'
++ $ legit.pl merge 1 -m "sixth commit"
++ Committed as commit 5
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ legit.pl merge 3 -m "seventh commit"
++ Committed as commit 6
++ $ legit.pl status
++ a - same as repo
++ b - same as repo
++ c - same as repo
++ d - same as repo
++ $ legit.pl checkout b1
++ Switched to branch 'b1'
++ $ legit.pl merge 4 -m "fast-forward"
++ Fast-forward: no commit created
+Test subset2_106 (merge) - failed (Incorrect output)
+Your program produced these 27 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo line 1 >a
+$ echo line 1 >b
+$ legit.pl add a b
+$ legit.pl commit -m c1
+Committed as commit 0
+$ legit.pl branch b1
+$ legit.pl branch b2
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ echo "modified line 1" >a
+$ echo "modified line 1" >b
+$ legit.pl commit -a -m c2
+Committed as commit 1
+$ legit.pl checkout b2
+Switched to branch 'b2'
+$ echo "modified line 1" >a
+$ legit.pl commit -a -m c3
+Committed as commit 2
+$ legit.pl checkout master
+Switched to branch 'master'
+$ legit.pl merge b1 -m m1
+Auto-merging a
+Auto-merging b
+Fast-forward: no commit created
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl merge b1 -m m1
+- Auto-merging a
+- Auto-merging b
+  Fast-forward: no commit created
+- *** TEST STOPPED: incorrect output from legit.pl
++ $ legit.pl checkout b2
++ Switched to branch 'b2'
++ $ legit.pl merge b1 -m m2
++ Committed as commit 3
+Test subset2_107 (merge) - failed (Incorrect output)
+Your program produced these 26 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ legit.pl branch
+legit.pl: error: your repository does not have any commits yet
+$ touch a b c d
+$ echo a > a
+$ legit.pl add a b c
+$ legit.pl commit -m "commit-1"
+Committed as commit 0
+$ legit.pl status
+a - same as repo
+b - same as repo
+c - same as repo
+d - untracked
+$ legit.pl branch b1
+$ legit.pl branch
+b1
+master
+$ legit.pl checkout b1
+Switched to branch 'b1'
+$ legit.pl status
+a - same as repo
+b - same as repo
+c - same as repo
+d - same as repo
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  c - same as repo
++ d - untracked
++ $ touch a
++ $ legit.pl add d
++ $ legit.pl status
+- d - same as repo
++ a - same as repo
+- *** TEST STOPPED: incorrect output from legit.pl
++ b - same as repo
++ c - same as repo
++ d - added to index
++ $ legit.pl show :a
++ a
++ $ legit.pl show :b
++ $ legit.pl show :c
++ $ legit.pl show :d
++ $ legit.pl commit -a -m "commit-2"
++ Committed as commit 1
++ $ legit.pl checkout master
++ Switched to branch 'master'
++ $ echo d >> d
++ $ legit.pl add d
++ $ touch a
++ $ legit.pl show :a
++ a
++ $ legit.pl show :b
++ $ legit.pl show :c
++ $ legit.pl show :d
++ d
++ $ legit.pl commit -m "commit 3"
++ Committed as commit 2
++ $ legit.pl merge
++ usage: legit.pl merge <branch|commit> -m message
++ $ legit.pl merge b1
++ legit.pl: error: empty commit message
++ $ legit.pl show 0:d
++ legit.pl: error: 'd' not found in commit 0
++ $ legit.pl show 1:d
++ $ legit.pl show 2:d
++ d
++ $ legit.pl show 0:a
++ a
++ $ legit.pl show 2:a
++ a
++ $ legit.pl show 2:b
++ $ legit.pl show 2:c
++ $ legit.pl show 2:d
++ d
++ $ legit.pl merge -m "commit 4" b1
++ Auto-merging d
++ Committed as commit 3
+Test subset2_108 (merge from previous commit) - failed (Incorrect output)
+Your program produced these 14 lines of output:
+$ legit.pl init
+Initialized empty legit repository in .legit
+$ echo tester file > a
+$ legit.pl add a
+$ legit.pl commit -m commit-0
+Committed as commit 0
+$ legit.pl add b
+legit.pl: error: can not open 'b'
+$ echo another line >>a
+$ legit.pl commit -a -m commit-0
+Committed as commit 1
+$ legit.pl merge 0 -m merge-0
+legit.pl: error: unknown branch '0'
+*** TEST STOPPED: incorrect output from legit.pl
+
+The difference between your output(-) and the correct output(+) is:
+...
+  $ legit.pl merge 0 -m merge-0
+- legit.pl: error: unknown branch '0'
+- *** TEST STOPPED: incorrect output from legit.pl
++ Already up to date
++ $ echo another file > c
++ $ legit.pl add c
++ $ legit.pl commit -m commit-1
++ Committed as commit 2
++ $ legit.pl branch b1
++ $ echo another file >d
++ $ legit.pl add d
++ $ legit.pl commit -m commit-2
++ Committed as commit 3
++ $ legit.pl checkout master
++ Already on 'master'
++ $ legit.pl show :d
++ another file
++ $ legit.pl show 2:d
++ legit.pl: error: 'd' not found in commit 2
+78 tests passed 30 tests failed
+
+Testing Summary
+
+78 tests passed, 30 tests failed, 0 tests not run
+
+Your performance mark was produced from the number of tests passed (ignoring subsets) and
+translate using a piece-wise linear formula consistent with the indicative marking scheme
+in the assignment specification.
+
+Mark for automarking tests: 87.8/100
+
+
+You can rerun the tests used in marking by running: 2041 automark legit
+
+!!specialmark  (automated testing)                      70.2/80
+
+!!marktab       **  MARKER'S  ASSESSMENT  **
+
+                              style   ..  (15)  14
+ ^
++ ================================================================================================== +
++ Be careful when using one or two letter variable names as it makes it difficult to understand the  +
++ purpose of the variable (see your `_merge` subroutine for an example).                             +
++ ================================================================================================== +
+
+                              test-suite  (5)   5
+
+!!finalmark     **  FINAL  ASSIGNMENT  MARK:    89.2/100
+
+5192747 Xie, Cheng                              8543   COMPCS
+
+
+Marked by z5060214 on Fri Nov  2 11:49:07 2018
+
+
+COMP[29]041 18s2: Software Construction is brought to you by 
+the School of Computer Science and Engineering at the University of New South Wales, Sydney.
+For all enquiries, please email the class account at cs2041@cse.unsw.edu.au
+CRICOS Provider 00098G
